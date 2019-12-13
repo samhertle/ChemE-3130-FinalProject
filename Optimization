@@ -1,0 +1,139 @@
+#include <stdio.h>
+#include <float.h>
+#include <stdlib.h>
+#include <math.h>
+#include <stdbool.h>
+#include <string.h>
+#include <ctype.h>
+
+float mwat = 1887.0219; // kg/s. The water flow operates at 30,000 gpm. 
+float cpwat = 4.18; // kJ/kg K. Heat capacity of water.
+float mamm = 121.80; // kg/s. Flow rate of the ammonia refrigerant. This is 1/5th of the flow rate of water based on the first law of thermodynamics.
+float cpamm = 4.74; // kJ/kg K. Heat capacity of liquid ammonia.
+float mco2 = 154.60; // kg/s. Flow rate of the carbon dioxide refrigerant. This is 1/5th of the flow rate of water based on the first law of thermodynamics.
+float cpco2 = 5.0; // kJ/kg K. Heat capacity of liquid carbon dioxide.
+
+// Chooses the appropriate model.
+static int get_pump_style(char *op){
+	const char *pump_style[] = {"basic", "staggeredco2", "staggeredamm"};
+	for (int i=0; i<3; i++)
+	{
+		if(strcmp(pump_style[i], op) == 0)
+		{
+			return i;
+		}
+	}
+	return 0;
+}	
+
+// This function optimizes the work input, used to operate the heat pump. The goal is to maximize the COP,
+// which minimizes the work input, while simultaneously controlling the temperature of the water that returns
+// to the lake. 
+void optimize(char *pump, float T1, float T2, float T3, float T4, float dT){
+
+	float tempWin, cop, Win, coptemp;
+
+	bool change = true;
+
+	int pump_type = get_pump_style(pump);
+
+	switch(pump_type)
+	{
+		case 0: 
+			// Single refrigeration loop. This code starts at an arbitrary temperature of 300K, which is
+			// the temperature of that water that flows back in the lake. 
+			// This output temperature is decreased at each iteration and the work input and ideal COP
+			// are calculated for each value. The optimization stops if 1) the cop is no longer increasing,
+			// 2) the output temperature reaches the input temperature, in which case there is no heat exchange,
+			// 3) the COP grows past 4.1, which is the greatest value thermodynamically possible as calculated by hand.
+
+			do {
+
+				tempWin = mwat*cpwat*fabsf(T2-T1) - mwat*cpwat*fabsf(T4-T3);
+				coptemp = mwat*cpwat*fabsf(T4-T3)/tempWin;
+				T2 -= 0.05;
+				Win = mwat*cpwat*fabsf(T2-T1) - mwat*cpwat*fabsf(T4-T3); // Ein is the work input, determined by an energy balance.
+				cop = mwat*cpwat*fabsf(T4-T3)/Win;
+				//printf("%f, %f, %f\n ", cop, Ein, T2);
+				change = ( cop > coptemp + 0.00001 ? 1 : 0);
+				
+				} 
+				while (change && T2 > T1 && cop < 4.1);
+			
+			T2 +=0.05;
+			Win = mwat*cpwat*fabsf(T2-T1) - mwat*cpwat*fabsf(T4-T3);
+			cop = mwat*cpwat*fabsf(T4-T3)/Win;
+
+			printf("The optimal COP is %f at T2 %f with work input %f\n", cop, T2, Win);
+		
+			break; 
+
+		case 1:
+			// Double refrigeration loop using liquid carbon dioxide as refrigerant. The double refrigeration 
+			// loop operates to achieve the same output as the single loop. 
+			// The initial work input, 8608.45 kJ/s, was chosen based on the highest COP calculated for the ideal single loop. T2 was set to the 
+			// temperature at which water returns to the lake, also based on the highest COP for the single loop.
+			// The work input into the first loop was divided by 3. The goal of these calculations are to
+			// see if the COP of the ideal single loop can be increased or not.
+			// At each iteration, the change in temperature across the heat exchanger from refrigerant to refrigerant
+			// is incremented and the total work input and COP are calculated.
+
+			do {
+				
+				tempWin = (8608.45/3) + mwat*cpwat*fabsf(T2-T1) - mco2*cpco2*dT;
+				coptemp = mwat*cpwat*fabsf(T4-T3)/tempWin;
+				dT += 0.1;
+				Win = (8608.45/3) + mwat*cpwat*fabsf(T2-T1) - mco2*cpco2*dT;
+				cop = mwat*cpwat*fabsf(T4-T3)/Win;
+				//printf("%f, %f, %f\n ", cop, Win, dT);
+				change = (cop > coptemp + 0.00001 ? 1 : 0);
+				
+				} while (change && dT < 50);
+
+			dT -= 0.1;
+			Win = (8608.45/3) + mwat*cpwat*fabsf(T2-T1) - mco2*cpco2*dT;
+			cop = mwat*cpwat*fabsf(T4-T3)/tempWin;
+			printf("The optimal COP is %f with a dT of %f and Win %f\n", cop, dT, Win);
+
+			break;
+
+		case 2:
+			// Double refrigeration loop using liquid ammonia as refrigerant. The same assumptions
+			// as described for case 1 hold in this model.
+
+			do {
+				tempWin = (8608.45/3) + mwat*cpwat*fabsf(T2-T1) - mamm*cpamm*dT;
+				coptemp = mwat*cpwat*fabsf(T4-T3)/tempWin;
+				dT += 0.1;
+				Win = (8608.45/3) + mwat*cpwat*fabsf(T2-T1) - mamm*cpamm*dT;
+				cop = mwat*cpwat*fabsf(T4-T3)/Win;
+				//printf("%f, %f, %f\n ", cop, Win, dT);
+				change = (cop > coptemp + 0.00001 ? 1 : 0);
+
+				} while (change && dT <50);
+
+			dT -= 0.1;
+			Win = (8608.45/3) + mwat*cpwat*fabsf(T2-T1) - mamm*cpamm*dT;
+			cop = mwat*cpwat*fabsf(T4-T3)/tempWin;
+			printf("The optimal COP is %f with a dT of %f and Ein %f\n", cop, dT, Win);
+
+			break;
+
+		default:
+			return;
+
+	}
+	
+}
+
+int main(){
+	float x, T1, T2, T3, T4, dT;
+	T4 = 278.15; // The temperature at which water from the power plant comes.
+	T3 = 273.706; // The heat pump operates to achieve a temperature of 33 degrees fahrenheit to cool the campus.
+	T1 = 284.817;
+	T2 = 290.352356; // comment out one of these T2s for the appropriate model. Choose T2 of 300K for a single loop analysis.
+	//T2 = 300.00;
+	dT = 0.00;
+	optimize("staggeredamm", T1, T2, T3, T4, dT); //overwrite "staggeredamm" with either "basic" or "staggeredco2" for appropriate model.
+	return 0;
+}
